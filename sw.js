@@ -1,13 +1,19 @@
 /* True Access service worker — offline app shell for installability. */
-const CACHE_NAME = 'true-access-v1';
+const CACHE_NAME = 'true-access-v3';
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
+  './voice-trigger.js',
+  './descriptions.js',
+  './official-ad-db.json',
   './manifest.json',
   './icons/icon-192.png',
-  './icons/icon-512.png'
+  './icons/icon-512.png',
+  './vendor/chromaprint/index.js',
+  './vendor/chromaprint/chromaprint.js',
+  './vendor/chromaprint/chromaprint.wasm'
 ];
 
 self.addEventListener('install', event => {

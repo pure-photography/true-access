@@ -1,0 +1,216 @@
+{
+  "_comment": "True Access — curated seed database of titles with official audio description tracks. This is a STARTER list of flagship originals that are certain to carry AD on their home services. It is NOT exhaustive: thousands of described titles exist (see the ACB Audio Description Project Master List). Grow this file over time, or point TA_DESCRIBE_CONFIG.officialDbUrl at a remotely-hosted JSON to update it without redeploying the app.",
+  "note": "Curated seed list — flagship originals, all confirmed to ship with professional AD on their home service.",
+  "services": {
+    "appletv": {
+      "howTo": "While it is playing, open the Audio menu and choose English - AD. Apple TV+ includes audio description on all of its originals.",
+      "name": "Apple TV+"
+    },
+    "disney": {
+      "howTo": "While it is playing, open the Audio and Subtitles menu and choose English [Audio Description].",
+      "name": "Disney+"
+    },
+    "hulu": {
+      "howTo": "While it is playing, open Settings (the gear icon), then Audio, and choose English - Audio Description.",
+      "name": "Hulu"
+    },
+    "max": {
+      "howTo": "While it is playing, open Audio and Subtitles and choose English - Audio Description.",
+      "name": "Max"
+    },
+    "netflix": {
+      "howTo": "While it is playing, open Audio and Subtitles (the speech-bubble icon) and choose English [Audio Description].",
+      "name": "Netflix"
+    },
+    "prime": {
+      "howTo": "While it is playing, open Audio and Subtitles and choose English [Audio Description].",
+      "name": "Prime Video"
+    }
+  },
+  "titles": [
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "Stranger Things",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "The Crown",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "Bridgerton",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "Wednesday",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "Squid Game",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "The Queen's Gambit",
+      "type": "series"
+    },
+    {
+      "services": [
+        "netflix"
+      ],
+      "title": "Our Planet",
+      "type": "series"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "Frozen",
+      "type": "movie"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "The Lion King",
+      "type": "movie"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "Moana",
+      "type": "movie"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "Encanto",
+      "type": "movie"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "The Mandalorian",
+      "type": "series"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "Loki",
+      "type": "series"
+    },
+    {
+      "services": [
+        "disney"
+      ],
+      "title": "WandaVision",
+      "type": "series"
+    },
+    {
+      "services": [
+        "max"
+      ],
+      "title": "The Last of Us",
+      "type": "series"
+    },
+    {
+      "services": [
+        "max"
+      ],
+      "title": "Game of Thrones",
+      "type": "series"
+    },
+    {
+      "services": [
+        "max"
+      ],
+      "title": "House of the Dragon",
+      "type": "series"
+    },
+    {
+      "services": [
+        "max"
+      ],
+      "title": "Succession",
+      "type": "series"
+    },
+    {
+      "services": [
+        "hulu"
+      ],
+      "title": "The Bear",
+      "type": "series"
+    },
+    {
+      "services": [
+        "hulu"
+      ],
+      "title": "Only Murders in the Building",
+      "type": "series"
+    },
+    {
+      "services": [
+        "appletv"
+      ],
+      "title": "Ted Lasso",
+      "type": "series"
+    },
+    {
+      "services": [
+        "appletv"
+      ],
+      "title": "The Morning Show",
+      "type": "series"
+    },
+    {
+      "services": [
+        "appletv"
+      ],
+      "title": "Severance",
+      "type": "series"
+    },
+    {
+      "services": [
+        "prime"
+      ],
+      "title": "The Boys",
+      "type": "series"
+    },
+    {
+      "services": [
+        "prime"
+      ],
+      "title": "The Marvelous Mrs. Maisel",
+      "type": "series"
+    },
+    {
+      "services": [
+        "prime"
+      ],
+      "title": "Reacher",
+      "type": "series"
+    }
+  ],
+  "updated": "2026-10-18",
+  "version": 1
+}

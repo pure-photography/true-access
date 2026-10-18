@@ -4,20 +4,54 @@
  * WHAT IS REAL in this prototype:
  *   - Microphone capture via getUserMedia (including Bluetooth headset mics
  *     such as the Ray-Ban Meta glasses when paired to the phone)
- *   - Live microphone level meter
+ *   - Live microphone level meter (visual bar + throttled text alternative)
+ *   - Audio fingerprinting: 10 seconds of microphone audio are fingerprinted
+ *     ON THE PHONE with the Chromaprint algorithm (WebAssembly, vendored)
+ *     and looked up in the free AcoustID music database — no server, no
+ *     cost. Needs the free API key (see FINGERPRINTING.md). Demo mode keeps
+ *     the sample programs available for offline testing.
  *   - Text-to-speech via the Web Speech API (voice picker, rate control)
  *   - The full listening -> identifying -> describing user flow
+ *   - Hands-free voice trigger: say "describe this" to run the describe flow
+ *     without touching the phone (voice-trigger.js; Porcupine wake-word
+ *     engine when set up, browser speech recognition as the fallback)
  *
  * WHAT IS DEMO (simulated) in this prototype:
- *   - Content identification. A real Shazam-style audio-fingerprint service
- *     requires a paid backend. identifyContent() is structured so a real API
- *     can be plugged in later — see the TODO inside. For now it waits ~3
- *     seconds and returns one of the built-in sample programs below.
- *   - The audio descriptions themselves are short ORIGINAL sample scripts
- *     written for this demo, not descriptions of real movies or shows.
+ *   - The free AcoustID database covers MUSIC only. It cannot identify TV
+ *     shows or movies — no free service can (see FINGERPRINTING.md). Music
+ *     matches flow into the real descriptions.js pipeline like any title.
+ *   - The audio descriptions for the built-in DEMO programs are short ORIGINAL
+ *     sample scripts (SAMPLE_PROGRAMS) — not descriptions of real content.
+ *     For any REAL identified title, descriptions.js runs the real two-stage
+ *     pipeline: official-AD-track lookup first, then free-LLM AI generation.
+ *     (descriptions.js is loaded by index.html before this file.)
+ *
+ * ACCESSIBILITY CONTRACT (screen-reader-first — see ACCESSIBILITY.md):
+ *   - Every state change is announced: status via role="status" (polite),
+ *     errors via role="alert" (assertive).
+ *   - Focus is managed, never lost: when a focused control is disabled,
+ *     focus moves to its replacement FIRST, then the control is disabled.
+ *   - Focus moves to the results heading when a description is ready.
+ *   - The level meter exposes aria-valuenow + aria-valuetext, updated at
+ *     most once per second (never floods the screen reader).
+ *   - Microphone permission is only requested after plain-language consent.
  * ========================================================================== */
 
 'use strict';
+
+/* ---------- Fingerprinting configuration (Worker 1) ----------
+ * HOW TO ACTIVATE REAL IDENTIFICATION (free, no credit card):
+ *   1. Sign in at https://acoustid.org (a free MusicBrainz account works).
+ *   2. Open "API keys" and register this app ("True Access") for a key.
+ *   3. Paste the key below between the quotes. 4. Redeploy the app.
+ * Full comparison of services and the TV/movie gap: FINGERPRINTING.md
+ * Until a key is set, the app says so plainly instead of failing silently. */
+const FINGERPRINTING = {
+  ACOUSTID_API_KEY: '',
+  CLIP_SECONDS: 10,      // seconds of microphone audio captured per attempt
+  LOOKUP_TIMEOUT_MS: 30000,
+  MIN_SCORE: 0.8          // minimum AcoustID match confidence (0-1)
+};
 
 /* ---------- Sample programs with original demo audio descriptions ----------
  * Each program has three verbosity variants. These are original scripts
@@ -52,6 +86,7 @@ const SAMPLE_PROGRAMS = [
 
 /* ---------- Element references ---------- */
 const statusEl = document.getElementById('status');
+const alertEl = document.getElementById('alert');
 const levelMeter = document.getElementById('level-meter');
 const levelFill = document.getElementById('level-fill');
 const levelText = document.getElementById('level-text');
@@ -61,8 +96,10 @@ const startBtn = document.getElementById('start-btn');
 const stopBtn = document.getElementById('stop-btn');
 const describeBtn = document.getElementById('describe-btn');
 const resultCard = document.getElementById('result-card');
+const resultHeading = document.getElementById('result-heading');
 const identifiedTitle = document.getElementById('identified-title');
 const descriptionText = document.getElementById('description-text');
+const descriptionSource = document.getElementById('description-source');
 const speakBtn = document.getElementById('speak-btn');
 const stopSpeechBtn = document.getElementById('stop-speech-btn');
 const voicePicker = document.getElementById('voice-picker');
@@ -70,6 +107,13 @@ const verbositySelect = document.getElementById('verbosity');
 const rateInput = document.getElementById('rate');
 const rateValue = document.getElementById('rate-value');
 const autoSpeakCheckbox = document.getElementById('auto-speak');
+const demoModeCheckbox = document.getElementById('demo-mode');
+const consentCard = document.getElementById('consent-card');
+const consentHeading = document.getElementById('consent-heading');
+const consentYesBtn = document.getElementById('consent-yes');
+const consentNoBtn = document.getElementById('consent-no');
+const repeatBtn = document.getElementById('repeat-btn');
+const stopAllBtn = document.getElementById('stop-all-btn');
 
 /* ---------- Audio state ---------- */
 let mediaStream = null;
@@ -77,10 +121,37 @@ let audioContext = null;
 let analyser = null;
 let levelRafId = null;
 let currentProgram = null;
+let lastDescription = null; // { title, text } — for "Repeat last description"
+let lastMeterAriaUpdate = 0;
+let lastMeterWord = '';
 
-/* ---------- Helpers ---------- */
+/* ---------- Microphone consent (remembered for this browser) ---------- */
+let micConsent = false;
+try {
+  micConsent = window.localStorage.getItem('taMicConsent') === 'yes';
+} catch (e) {
+  micConsent = false; // private browsing etc. — just ask each session
+}
+
+/* ---------- Announced status + errors ---------- */
+let statusToken = 0;
 function setStatus(message) {
-  statusEl.textContent = message; // role="status" + aria-live announces this
+  // Clear-then-set forces screen readers to re-announce repeated messages.
+  const token = ++statusToken;
+  statusEl.textContent = '';
+  window.setTimeout(() => {
+    if (token === statusToken) statusEl.textContent = message;
+  }, 40);
+}
+
+function setAlert(message) {
+  // role="alert" is assertive: interruptions and errors always break through.
+  alertEl.textContent = '';
+  window.setTimeout(() => { alertEl.textContent = message; }, 40);
+}
+
+function moveFocus(el) {
+  if (el && typeof el.focus === 'function') el.focus();
 }
 
 function levelWord(value) {
@@ -93,7 +164,11 @@ function levelWord(value) {
 /* ---------- Microphone device listing ----------
  * REAL: uses enumerateDevices. Note: device labels are hidden until the user
  * grants microphone permission at least once (browser privacy rule). */
-async function loadMicrophones() {
+async function loadMicrophones(announce) {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+    if (announce) setAlert('This browser cannot list microphones.');
+    return;
+  }
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const mics = devices.filter(d => d.kind === 'audioinput');
@@ -110,18 +185,52 @@ async function loadMicrophones() {
       micPicker.appendChild(opt);
     });
     if (previous) micPicker.value = previous;
-    if (mics.length === 0) {
-      setStatus('No microphones found. Check that your headset is paired.');
+    if (announce) {
+      if (mics.length === 0) {
+        setAlert('No microphones found. Make sure your glasses or headset is paired by Bluetooth, then tap "Refresh microphone list" again.');
+      } else {
+        setStatus('Found ' + mics.length + (mics.length === 1 ? ' microphone.' : ' microphones.'));
+      }
     }
   } catch (err) {
-    setStatus('Could not list microphones: ' + err.message);
+    if (announce) setAlert('Could not list microphones: ' + err.message);
   }
+}
+
+/* ---------- Microphone consent flow ----------
+ * The OS permission prompt is never requested without plain-language
+ * consent first, so Mary is never surprised by a system dialog. */
+function showConsent() {
+  consentCard.hidden = false;
+  setStatus('Before we start, please confirm microphone use.');
+  moveFocus(consentHeading);
+}
+
+function hideConsent(returnFocusToStart) {
+  consentCard.hidden = true;
+  if (returnFocusToStart) moveFocus(startBtn);
+}
+
+function grantConsent() {
+  micConsent = true;
+  try { window.localStorage.setItem('taMicConsent', 'yes'); } catch (e) { /* ignore */ }
+  hideConsent(false);
+  startListening();
+}
+
+function declineConsent() {
+  hideConsent(true);
+  setStatus('No problem. Tap "Start Listening" whenever you are ready.');
 }
 
 /* ---------- Listening (REAL) ---------- */
 async function startListening() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    setStatus('Sorry — this browser does not support microphone access.');
+    setAlert('Sorry — this browser does not support microphone access.');
+    return;
+  }
+  if (!micConsent) {
+    showConsent();
     return;
   }
   const constraints = { audio: true };
@@ -137,14 +246,21 @@ async function startListening() {
     analyser.fftSize = 512;
     source.connect(analyser);
     drawLevel();
-    // Refresh labels now that permission is granted
-    loadMicrophones();
-    startBtn.disabled = true;
+    // Refresh labels now that permission is granted (silent — no announcement spam).
+    loadMicrophones(false);
     stopBtn.disabled = false;
     describeBtn.disabled = false;
+    moveFocus(stopBtn); // focus moves BEFORE startBtn is disabled: focus is never lost
+    startBtn.disabled = true;
     setStatus('Listening. Play something nearby, then tap "Describe what\u2019s playing".');
   } catch (err) {
-    setStatus('Microphone access was blocked or failed: ' + err.message);
+    const name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      setAlert('Microphone permission was denied. To turn it on, open your iPhone Settings, find your browser, and allow microphone access. Then tap "Start Listening" again.');
+    } else {
+      setAlert('Microphone access failed: ' + (err && err.message ? err.message : 'unknown error') + '.');
+    }
+    setStatus('Microphone is off. Tap "Start Listening" to try again.');
   }
 }
 
@@ -159,15 +275,28 @@ function drawLevel() {
     }
     const rms = Math.sqrt(sum / data.length);
     const pct = Math.min(100, Math.round(rms * 260));
+    const word = levelWord(pct);
+    // Visual bar updates every frame; the screen-reader value updates at
+    // most once per second so it never floods the speech queue.
     levelFill.style.width = pct + '%';
-    levelMeter.setAttribute('aria-valuenow', String(pct));
-    levelText.textContent = 'Level: ' + levelWord(pct);
+    const now = performance.now();
+    if (word !== lastMeterWord || now - lastMeterAriaUpdate >= 1000) {
+      lastMeterWord = word;
+      lastMeterAriaUpdate = now;
+      levelMeter.setAttribute('aria-valuenow', String(pct));
+      levelMeter.setAttribute('aria-valuetext', word);
+      levelText.textContent = 'Level: ' + word;
+    }
     levelRafId = requestAnimationFrame(tick);
   };
   tick();
 }
 
-function stopListening() {
+/* ---------- Stop everything: halts listening AND speech ----------
+ * One big, always-findable stop. Never leaves audio running behind Mary. */
+function stopEverything() {
+  const wasListening = !!mediaStream;
+  const wasSpeaking = ('speechSynthesis' in window) && speechSynthesis.speaking;
   if (levelRafId) cancelAnimationFrame(levelRafId);
   levelRafId = null;
   if (mediaStream) {
@@ -179,24 +308,39 @@ function stopListening() {
     audioContext = null;
   }
   analyser = null;
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (window.VoiceTrigger) {
+    window.VoiceTrigger.resumeAfterSpeech();
+    window.VoiceTrigger.handleMainListeningStopped();
+  }
   levelFill.style.width = '0%';
   levelMeter.setAttribute('aria-valuenow', '0');
+  levelMeter.setAttribute('aria-valuetext', 'quiet');
   levelText.textContent = 'Level: quiet';
+  lastMeterWord = 'quiet';
   startBtn.disabled = false;
+  moveFocus(startBtn); // focus moves BEFORE the stop buttons are disabled
   stopBtn.disabled = true;
   describeBtn.disabled = true;
-  setStatus('Stopped. Tap "Start Listening" to begin again.');
+  if (wasListening || wasSpeaking) {
+    setStatus('Stopped everything. Listening and speech are off.');
+  } else {
+    setStatus('Nothing to stop — the app is already idle.');
+  }
 }
 
-/* ---------- Content identification ----------
- * DEMO: simulates a 3-second identification and returns a sample program.
- *
- * TODO (real backend): replace the body of this function with a call to a
- * real audio-fingerprinting service. Capture a few seconds of audio from
- * `mediaStream` via MediaRecorder, POST the clip to the service, and return
- * { title, descriptions } in the same shape. Everything downstream already
- * expects that shape, so only this function needs to change. */
-function identifyContent() {
+/* ---------- Content identification (Worker 1: REAL) ----------
+ * 10 seconds of microphone audio -> on-device Chromaprint fingerprint
+ * (WebAssembly, vendored in vendor/chromaprint/) -> free AcoustID music
+ * lookup. Resolves to a program shaped like { title, descriptions }; for
+ * real matches `descriptions` is undefined and descriptions.js runs its
+ * two-stage pipeline (official AD track, then AI overview) on the title.
+ * Demo mode keeps the sample programs for offline testing.
+ * Progress goes to setStatus (polite); failures throw with plain-language
+ * messages that describeWhatsPlaying routes to setAlert (assertive). */
+
+/* Demo path: the original simulated behaviour, kept behind the toggle. */
+function identifyDemo() {
   return new Promise(resolve => {
     setTimeout(() => {
       const pick = SAMPLE_PROGRAMS[Math.floor(Math.random() * SAMPLE_PROGRAMS.length)];
@@ -205,25 +349,202 @@ function identifyContent() {
   });
 }
 
+/* Capture N seconds of microphone audio as a Blob. */
+function recordClip(stream, seconds) {
+  return new Promise((resolve, reject) => {
+    if (typeof MediaRecorder === 'undefined') {
+      reject(new Error('Audio recording is not supported in this browser.'));
+      return;
+    }
+    const preferredTypes = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', ''];
+    const mimeType = preferredTypes.find(t => !t || MediaRecorder.isTypeSupported(t));
+    let recorder;
+    try {
+      recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+    } catch (err) {
+      reject(new Error('Could not start audio recording: ' + err.message));
+      return;
+    }
+    const chunks = [];
+    let timerId = null;
+    recorder.ondataavailable = event => {
+      if (event.data && event.data.size > 0) chunks.push(event.data);
+    };
+    recorder.onerror = () => {
+      clearTimeout(timerId);
+      reject(new Error('Audio recording failed unexpectedly.'));
+    };
+    recorder.onstop = () => {
+      clearTimeout(timerId);
+      resolve(new Blob(chunks, { type: recorder.mimeType || 'audio/webm' }));
+    };
+    recorder.start(1000);
+    timerId = setTimeout(() => {
+      if (recorder.state !== 'inactive') recorder.stop();
+    }, seconds * 1000);
+  });
+}
+
+/* Fetch with a hard timeout so a stalled network never hangs the app.
+ * Named fetchWithDeadline to avoid clobbering descriptions.js's
+ * fetchWithTimeout (classic scripts share one global scope). */
+function fetchWithDeadline(url, timeoutMs) {
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { signal: controller.signal }).finally(() => clearTimeout(timerId));
+}
+
+/* Look a Chromaprint fingerprint up in the free AcoustID database.
+ * Resolves to { title, artist, score } or null when nothing matches. */
+async function lookupAcoustId(fingerprint, durationSec) {
+  const url =
+    'https://api.acoustid.org/v2/lookup' +
+    '?client=' + encodeURIComponent(FINGERPRINTING.ACOUSTID_API_KEY) +
+    '&duration=' + durationSec +
+    '&meta=recordings' +
+    '&fingerprint=' + encodeURIComponent(fingerprint);
+  let response;
+  try {
+    response = await fetchWithDeadline(url, FINGERPRINTING.LOOKUP_TIMEOUT_MS);
+  } catch (err) {
+    throw new Error('Could not reach the identification service. Check your internet connection and try again.');
+  }
+  let data;
+  try {
+    data = await response.json();
+  } catch (err) {
+    throw new Error('The identification service returned an unreadable response.');
+  }
+  if (data && data.status === 'error') {
+    const msg = data.error && data.error.message ? data.error.message : 'unknown error';
+    throw new Error('Identification service error: ' + msg);
+  }
+  const results = ((data && data.results) || [])
+    .filter(r => r && typeof r.score === 'number')
+    .sort((a, b) => b.score - a.score);
+  const best = results[0];
+  if (!best || best.score < FINGERPRINTING.MIN_SCORE) return null;
+  const recording = (best.recordings && best.recordings[0]) || null;
+  if (!recording || !recording.title) return null;
+  const artist = ((recording.artists || []).map(a => a.name).filter(Boolean).join(', ')) || 'Unknown artist';
+  return { title: recording.title, artist: artist, score: best.score };
+}
+
+/* Real path: record -> fingerprint on the phone -> look up. */
+async function identifyReal() {
+  if (!FINGERPRINTING.ACOUSTID_API_KEY) {
+    throw new Error('Real identification is not set up yet. Add your free AcoustID API key in app.js (steps in FINGERPRINTING.md), or turn on Demo mode in Settings below.');
+  }
+  setStatus('Recording ' + FINGERPRINTING.CLIP_SECONDS + ' seconds of audio…');
+  const clipBlob = await recordClip(mediaStream, FINGERPRINTING.CLIP_SECONDS);
+  if (!clipBlob.size) {
+    throw new Error('The recording came back empty. Make sure something is playing and the microphone is working.');
+  }
+  setStatus('Fingerprinting the recording on your phone…');
+  let processAudioFile;
+  try {
+    // Vendored WebAssembly build; loaded lazily so startup stays light.
+    ({ processAudioFile } = await import('./vendor/chromaprint/index.js'));
+  } catch (err) {
+    throw new Error('Could not load the audio fingerprinting engine. Reload the page and try again.');
+  }
+  const clipBuffer = await clipBlob.arrayBuffer();
+  let fingerprint = null;
+  for await (const fp of processAudioFile(clipBuffer, { maxDuration: FINGERPRINTING.CLIP_SECONDS })) {
+    fingerprint = fp;
+    break; // one fingerprint covers the whole clip by default
+  }
+  if (!fingerprint) {
+    throw new Error('Could not fingerprint the recording. The audio may be too quiet or unclear.');
+  }
+  setStatus('Looking up the fingerprint in the music database…');
+  const match = await lookupAcoustId(fingerprint, FINGERPRINTING.CLIP_SECONDS);
+  if (!match) return null; // no confident match — caller announces this
+  // descriptions stays undefined: descriptions.js runs its two-stage
+  // pipeline (official AD track, then AI overview) on the real title.
+  return { title: match.artist + ' — "' + match.title + '"' };
+}
+
+function identifyContent() {
+  if (demoModeCheckbox && demoModeCheckbox.checked) {
+    return identifyDemo();
+  }
+  return identifyReal();
+}
+
+function generateDemoDescription(program, verbosity) {
+  // FALLBACK DEMO: used only when descriptions.js is unavailable. The
+  // separate step exists so every async state ("identifying", "generating",
+  // "speaking") is announced — see ACCESSIBILITY.md.
+  // NOTE: deliberately NOT named generateDescription — descriptions.js
+  // defines a global generateDescription(title, verbosity) for its AI
+  // pipeline, and classic scripts share one global scope. This name keeps
+  // both working (Worker 1 fix, 2026-10-18).
+  return new Promise(resolve => {
+    setTimeout(() => {
+      resolve(program.descriptions[verbosity] || program.descriptions.standard);
+    }, 1200);
+  });
+}
+
 async function describeWhatsPlaying() {
   if (!mediaStream) {
     setStatus('Start listening first, so the app can hear what is playing.');
     return;
   }
+  unlockSpeech(); // keep iOS speech allowed across the async gap (see below)
+  moveFocus(statusEl); // focus leaves the Describe button BEFORE it is disabled
   describeBtn.disabled = true;
   resultCard.hidden = true;
-  setStatus('Identifying what\u2019s playing… (demo mode: matching against sample programs)');
+  const inDemoMode = !!(demoModeCheckbox && demoModeCheckbox.checked);
+  setStatus(inDemoMode
+    ? 'Identifying what\u2019s playing… (demo mode: matching against the sample programs)'
+    : 'Identifying what\u2019s playing…');
   try {
     currentProgram = await identifyContent();
-    const verbosity = verbositySelect.value;
+    if (!currentProgram) {
+      // Real fingerprinting ran but nothing in the music database matched
+      // confidently — e.g. dialogue, a TV show/movie (not in the free music
+      // database), or an unclear recording. Announced, never silent.
+      setAlert('No match found in the music database. It may be dialogue, a TV show or a movie — those are not in the free music database yet — or the recording was too unclear. Try again with the volume up, or switch on Demo mode in Settings.');
+      setStatus('No match found. Tap "Describe what\u2019s playing" to try again.');
+      return;
+    }
     identifiedTitle.textContent = currentProgram.title;
-    descriptionText.textContent = currentProgram.descriptions[verbosity] || currentProgram.descriptions.standard;
+
+    /* Real description pipeline (descriptions.js): official-AD-track lookup
+     * first, then free-LLM AI generation, then a graceful spoken fallback.
+     * Demo programs keep their original sample scripts. Stage updates go
+     * through setStatus so screen readers announce progress. */
+    let text, sourceInfo;
+    if (window.TrueAccessDescribe) {
+      setStatus('Identified as ' + currentProgram.title + '. Checking for an official audio description track…');
+      const result = await window.TrueAccessDescribe.resolveDescription(
+        currentProgram.title,
+        verbositySelect.value,
+        currentProgram.descriptions, // demo fallback; undefined for real titles
+        stage => {
+          if (stage === 'ai') setStatus('No official track found. Generating an AI description…');
+        }
+      );
+      text = result.text;
+      sourceInfo = window.TrueAccessDescribe.sourceLabel(result);
+    } else {
+      // descriptions.js failed to load — local demo fallback (see below).
+      setStatus('Identified as ' + currentProgram.title + '. Generating description…');
+      text = await generateDemoDescription(currentProgram, verbositySelect.value);
+      sourceInfo = 'Description module unavailable — built-in demo script';
+    }
+    descriptionText.textContent = text;
+    if (descriptionSource) descriptionSource.textContent = sourceInfo;
+    lastDescription = { title: currentProgram.title, text: text, source: sourceInfo };
     resultCard.hidden = false;
-    setStatus('Description ready.');
-    if (autoSpeakCheckbox.checked) speakDescription();
-    resultCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    moveFocus(resultHeading); // focus moves to the results when ready
+    setStatus('Description ready: ' + currentProgram.title + '.');
+    if (autoSpeakCheckbox.checked) speakText(text);
   } catch (err) {
-    setStatus('Identification failed: ' + err.message);
+    setAlert('Sorry, that did not work: ' + (err && err.message ? err.message : 'unknown error') + '. Please try again.');
+    setStatus('No description yet. Tap "Describe what\u2019s playing" to try again.');
   } finally {
     describeBtn.disabled = false;
   }
@@ -252,46 +573,139 @@ function loadVoices() {
   if (previous) voicePicker.value = previous;
 }
 
-function speakDescription() {
+/* iOS Safari only allows speechSynthesis.speak() inside (or very near) a
+ * user gesture. Calling this from the tap handler keeps speech working
+ * after the multi-second identify/generate gap. */
+function unlockSpeech() {
+  try {
+    if ('speechSynthesis' in window) {
+      const warmup = new SpeechSynthesisUtterance(' ');
+      warmup.volume = 0;
+      speechSynthesis.speak(warmup);
+    }
+  } catch (e) { /* not fatal — speech may still work */ }
+}
+
+function speakText(text) {
   if (!('speechSynthesis' in window)) {
-    setStatus('Sorry — speech output is not supported in this browser.');
+    setAlert('Sorry — speech output is not supported in this browser.');
     return;
   }
   speechSynthesis.cancel();
-  const text = descriptionText.textContent.trim();
-  if (!text) {
+  const clean = (text || '').trim();
+  if (!clean) {
     setStatus('There is no description to speak yet.');
     return;
   }
-  const utter = new SpeechSynthesisUtterance(text);
+  const utter = new SpeechSynthesisUtterance(clean);
   const chosen = voicePicker.value;
   if (chosen) {
     const voice = getVoices().find(v => v.name === chosen);
     if (voice) utter.voice = voice;
   }
   utter.rate = parseFloat(rateInput.value) || 1;
-  utter.onend = () => setStatus('Finished speaking.');
-  utter.onerror = () => setStatus('Speech was interrupted.');
+  utter.onend = () => {
+    if (window.VoiceTrigger) window.VoiceTrigger.resumeAfterSpeech();
+    setStatus('Finished speaking the description.');
+  };
+  utter.onerror = (e) => {
+    if (window.VoiceTrigger) window.VoiceTrigger.resumeAfterSpeech();
+    if (e && e.error === 'interrupted') {
+      setStatus('Speech stopped.');
+    } else {
+      setAlert('Speech was interrupted before it finished.');
+    }
+  };
+  if (window.VoiceTrigger) window.VoiceTrigger.pauseForSpeech(); // trigger must not hear itself
   speechSynthesis.speak(utter);
   setStatus('Speaking the description…');
 }
 
+function speakDescription() {
+  speakText(descriptionText.textContent);
+}
+
 function stopSpeaking() {
   if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (window.VoiceTrigger) window.VoiceTrigger.resumeAfterSpeech();
   setStatus('Speech stopped.');
+}
+
+/* ---------- Repeat last description ----------
+ * Stays enabled even when empty so it is always findable; it announces
+ * politely when there is nothing to repeat yet. */
+function repeatLastDescription() {
+  if (!lastDescription) {
+    setStatus('There is no description to repeat yet. Describe something first.');
+    return;
+  }
+  unlockSpeech();
+  if (resultCard.hidden) {
+    identifiedTitle.textContent = lastDescription.title;
+    descriptionText.textContent = lastDescription.text;
+    if (descriptionSource) descriptionSource.textContent = lastDescription.source || '';
+    resultCard.hidden = false;
+  }
+  setStatus('Repeating the last description: ' + lastDescription.title + '.');
+  speakText(lastDescription.text);
+}
+
+/* ---------- Settings announcements ---------- */
+function rateSpeechText(value) {
+  return value.toFixed(1) + ' times normal speed';
+}
+
+rateInput.addEventListener('input', () => {
+  const v = parseFloat(rateInput.value) || 1;
+  rateValue.textContent = v.toFixed(1);
+  rateInput.setAttribute('aria-valuetext', rateSpeechText(v));
+});
+
+rateInput.addEventListener('change', () => {
+  const v = parseFloat(rateInput.value) || 1;
+  setStatus('Speech speed set to ' + rateSpeechText(v) + '.');
+});
+
+verbositySelect.addEventListener('change', () => {
+  const label = verbositySelect.options[verbositySelect.selectedIndex].textContent;
+  setStatus('Description detail set to: ' + label + '.');
+});
+
+micPicker.addEventListener('change', () => {
+  const label = micPicker.options[micPicker.selectedIndex].textContent;
+  setStatus('Microphone set to: ' + label + '.');
+});
+
+/* ---------- Demo mode toggle (Worker 1) ----------
+ * Remembered on this phone. When on, "Describe what's playing" matches
+ * against the built-in sample programs instead of real fingerprinting —
+ * the full flow stays testable with no network and no API key. */
+const DEMO_MODE_KEY = 'taDemoMode';
+if (demoModeCheckbox) {
+  try {
+    demoModeCheckbox.checked = window.localStorage.getItem(DEMO_MODE_KEY) === '1';
+  } catch (e) { /* private browsing — default off */ }
+  demoModeCheckbox.addEventListener('change', () => {
+    try {
+      window.localStorage.setItem(DEMO_MODE_KEY, demoModeCheckbox.checked ? '1' : '0');
+    } catch (e) { /* ignore */ }
+    setStatus(demoModeCheckbox.checked
+      ? 'Demo mode is on. Identifications will use the built-in sample programs.'
+      : 'Demo mode is off. Identifications will use real audio fingerprinting.');
+  });
 }
 
 /* ---------- Wire up events ---------- */
 startBtn.addEventListener('click', startListening);
-stopBtn.addEventListener('click', stopListening);
+stopBtn.addEventListener('click', stopEverything);
+stopAllBtn.addEventListener('click', stopEverything);
+repeatBtn.addEventListener('click', repeatLastDescription);
 describeBtn.addEventListener('click', describeWhatsPlaying);
 speakBtn.addEventListener('click', speakDescription);
 stopSpeechBtn.addEventListener('click', stopSpeaking);
-refreshMicsBtn.addEventListener('click', loadMicrophones);
-
-rateInput.addEventListener('input', () => {
-  rateValue.textContent = parseFloat(rateInput.value).toFixed(1);
-});
+refreshMicsBtn.addEventListener('click', () => loadMicrophones(true));
+consentYesBtn.addEventListener('click', grantConsent);
+consentNoBtn.addEventListener('click', declineConsent);
 
 if ('speechSynthesis' in window) {
   loadVoices();
@@ -301,5 +715,26 @@ if ('speechSynthesis' in window) {
   loadVoices();
 }
 
-navigator.mediaDevices.addEventListener('devicechange', loadMicrophones);
-loadMicrophones();
+if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+  navigator.mediaDevices.addEventListener('devicechange', () => loadMicrophones(false));
+}
+loadMicrophones(false);
+
+/* ---------- Hands-free voice trigger integration ----------
+ * voice-trigger.js loads after this file, so wire it up once the page
+ * (and all scripts) are ready. The trigger reuses describeWhatsPlaying()
+ * and the live-region announcements above; it is paused while the app
+ * itself is speaking so it can never trigger on its own output. */
+window.addEventListener('load', () => {
+  if (window.VoiceTrigger && typeof window.VoiceTrigger.init === 'function') {
+    window.VoiceTrigger.init({
+      onTrigger: () => describeWhatsPlaying(),
+      // Errors and blocks go to the assertive region; state changes stay polite.
+      announce: (msg) => {
+        if (/blocked|could not|failed|not supported|denied|rejected|kept stopping|not set up/i.test(msg)) setAlert(msg);
+        else setStatus(msg);
+      },
+      isListening: () => !!mediaStream
+    });
+  }
+});

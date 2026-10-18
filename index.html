@@ -6,6 +6,9 @@
   <title>True Access — Audio Description for Everything You Watch</title>
   <meta name="description" content="True Access: real-time audio description that works on whatever you're watching — TV, phone, tablet, or computer. Built for blind and low-vision viewers.">
   <meta name="theme-color" content="#0b0b1a">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <link rel="stylesheet" href="styles.css">
@@ -18,18 +21,30 @@
     <p class="tagline">Audio description for everything you watch — TV, phone, tablet, or computer.</p>
   </header>
 
-  <main id="main" class="app-main">
-    <!-- Status: announced politely to screen readers -->
+  <main id="main" class="app-main" tabindex="-1">
+    <!-- Status: announced politely to screen readers. Assertive errors go to #alert. -->
     <section aria-labelledby="status-heading" class="card">
       <h2 id="status-heading">Status</h2>
-      <p id="status" role="status" aria-live="polite" class="status-text">Idle. Connect your headset, then start listening.</p>
+      <p id="status" role="status" aria-live="polite" class="status-text" tabindex="-1">Idle. Connect your headset, then start listening.</p>
+      <p id="alert" role="alert" class="sr-only"></p>
       <div class="level-wrap">
         <label for="level-meter">Microphone level</label>
         <div id="level-meter" role="meter" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"
-             aria-label="Microphone input level" class="level-meter">
-          <div id="level-fill" class="level-fill"></div>
+             aria-valuetext="quiet" aria-label="Microphone input level" class="level-meter">
+          <div id="level-fill" class="level-fill" aria-hidden="true"></div>
         </div>
         <p id="level-text" class="level-text" aria-hidden="true">Level: quiet</p>
+      </div>
+    </section>
+
+    <!-- Microphone consent: shown the first time Start Listening is tapped. -->
+    <section aria-labelledby="consent-heading" class="card consent-card" id="consent-card" hidden>
+      <h2 id="consent-heading" tabindex="-1">Before we start: microphone permission</h2>
+      <p><strong>Why does True Access need your microphone?</strong> To describe what&rsquo;s playing, the app has to <em>hear</em> it. When you tap &ldquo;Yes, allow the microphone,&rdquo; your phone will ask for permission. If your glasses are paired as a Bluetooth headset, pick their microphone next so the app hears the TV or video near you &mdash; not the room.</p>
+      <p>In this prototype, the sound is only used to check the volume level and figure out what&rsquo;s playing. It is never recorded or saved.</p>
+      <div class="button-row">
+        <button id="consent-yes" type="button" class="btn btn-primary btn-big">Yes, allow the microphone</button>
+        <button id="consent-no" type="button" class="btn btn-secondary btn-big">Not right now</button>
       </div>
     </section>
 
@@ -44,19 +59,85 @@
         <button id="refresh-mics" type="button" class="btn btn-secondary">Refresh microphone list</button>
       </div>
       <div class="button-row">
-        <button id="start-btn" type="button" class="btn btn-primary btn-big">Start Listening</button>
+        <button id="start-btn" type="button" class="btn btn-primary btn-big" aria-describedby="mic-hint">Start Listening</button>
         <button id="stop-btn" type="button" class="btn btn-secondary btn-big" disabled>Stop</button>
       </div>
-      <div class="button-row">
-        <button id="describe-btn" type="button" class="btn btn-primary" disabled>Describe what's playing</button>
+      <div class="setting describe-setting">
+        <label for="verbosity">Description detail &mdash; how much should I describe?</label>
+        <select id="verbosity">
+          <option value="brief">Brief — key moments only</option>
+          <option value="standard" selected>Standard — scenes and actions</option>
+          <option value="detailed">Detailed — scenes, actions, and atmosphere</option>
+        </select>
       </div>
-      <p class="hint">Tip: pair your Ray-Ban Meta glasses to your phone as a Bluetooth headset first, then pick their microphone above.</p>
+      <div class="button-row">
+        <button id="describe-btn" type="button" class="btn btn-primary" disabled>Describe what&rsquo;s playing</button>
+      </div>
+      <p class="hint" id="mic-hint">Tip: pair your Ray-Ban Meta glasses to your phone as a Bluetooth headset first, then pick their microphone above.</p>
+    </section>
+
+    <!-- Hands-free voice trigger -->
+    <section aria-labelledby="voice-trigger-heading" class="card">
+      <h2 id="voice-trigger-heading">Hands-free voice trigger</h2>
+      <p id="ios-voice-note" class="warn-note" hidden>On iPhone, the always-on trigger only works when True Access is open in Safari — not in the installed app. This is an Apple limitation. The hold-to-talk button below works in Safari too.</p>
+      <div class="setting switch-row">
+        <input type="checkbox" id="voice-trigger-toggle" role="switch" aria-checked="false"
+               aria-describedby="voice-trigger-state voice-trigger-help">
+        <label for="voice-trigger-toggle">Voice trigger</label>
+      </div>
+      <p id="voice-trigger-state" class="vt-state">Off.</p>
+      <p id="voice-trigger-help" class="hint">When on, say <strong>"describe this"</strong> any time and the app describes what's playing — no tapping needed. The trigger only listens while "Start Listening" is active.</p>
+      <div class="setting">
+        <label for="voice-engine-select">Trigger engine</label>
+        <select id="voice-engine-select">
+          <option value="auto">Auto — best available</option>
+          <option value="porcupine">Porcupine wake word (on-device, recommended)</option>
+          <option value="speech">Browser speech recognition (works now)</option>
+        </select>
+        <p id="engine-hint" class="hint"></p>
+      </div>
+      <details class="setup-details">
+        <summary>Wake-word setup (one time, free — enables the on-device engine)</summary>
+        <div class="setup-body">
+          <p class="hint">The Porcupine wake-word engine hears <strong>"describe this"</strong> entirely on your phone — private, fast, and easy on the battery. Setup takes about 5 minutes:</p>
+          <ol class="setup-steps">
+            <li>Make a free account at <strong>console.picovoice.ai</strong> (no credit card). Copy your <strong>AccessKey</strong>.</li>
+            <li>In the console open <strong>Porcupine</strong>, type the wake phrase <strong>describe this</strong>, pick platform <strong>Web (WASM)</strong>, train, and download the <strong>.ppn</strong> keyword file.</li>
+            <li>Paste the key and choose the file below, then save.</li>
+          </ol>
+          <p class="hint">Do <strong>not</strong> train a phrase starting with "Hey Meta" — the glasses wake their own assistant on "Hey Meta" before this app ever hears it. Plain "describe this" is the phrase to train.</p>
+          <div class="setting">
+            <label for="porcupine-key">Picovoice AccessKey</label>
+            <input type="password" id="porcupine-key" autocomplete="off" spellcheck="false"
+                   placeholder="Paste your AccessKey here">
+          </div>
+          <div class="setting">
+            <label for="porcupine-model-file">Wake-word model file (.ppn)</label>
+            <input type="file" id="porcupine-model-file" accept=".ppn">
+          </div>
+          <div class="setting">
+            <label for="porcupine-sensitivity">Sensitivity: <span id="porcupine-sensitivity-value">0.65</span></label>
+            <input type="range" id="porcupine-sensitivity" min="0" max="1" step="0.05" value="0.65">
+            <p class="hint">Higher hears you more easily but may also fire on similar sounds. 0.65 is a good starting point.</p>
+          </div>
+          <button id="porcupine-save" type="button" class="btn btn-secondary">Save wake-word setup</button>
+          <p id="porcupine-setup-state" class="hint" role="status"></p>
+        </div>
+      </details>
+      <div class="button-row">
+        <button id="hold-to-talk-btn" type="button" class="btn btn-secondary hold-btn" aria-pressed="false">
+          Hold to talk — say "describe this"
+        </button>
+      </div>
+      <p class="hint">Fallback: press and hold the button (or tap it once with a screen reader for a 6-second listen), say "describe this", release. Works in Safari on iPhone and Chrome on Android.</p>
+      <p class="hint battery-note">Battery note: the on-device wake word sips power and can stay on. Browser speech recognition keeps the mic and network radio busy — turn the trigger off when you're done watching.</p>
     </section>
 
     <!-- Result -->
     <section aria-labelledby="result-heading" class="card" id="result-card" hidden>
-      <h2 id="result-heading">Now describing</h2>
+      <h2 id="result-heading" tabindex="-1">Now describing</h2>
       <p class="identified"><strong>Identified as:</strong> <span id="identified-title">—</span></p>
+      <p class="source-line"><span id="description-source"></span></p>
       <div class="description-box">
         <h3><label for="description-text">Audio description</label></h3>
         <p id="description-text" tabindex="0"></p>
@@ -77,33 +158,37 @@
         </select>
       </div>
       <div class="setting">
-        <label for="verbosity">Description detail</label>
-        <select id="verbosity">
-          <option value="brief">Brief — key moments only</option>
-          <option value="standard" selected>Standard — scenes and actions</option>
-          <option value="detailed">Detailed — scenes, actions, and atmosphere</option>
-        </select>
-      </div>
-      <div class="setting">
-        <label for="rate">Speech speed: <span id="rate-value">1.0</span>&times;</label>
-        <input type="range" id="rate" min="0.5" max="2" step="0.1" value="1">
+        <label for="rate">Speech speed: <span id="rate-value">1.0</span>&times; normal</label>
+        <input type="range" id="rate" min="0.5" max="2" step="0.1" value="1" aria-valuetext="1.0 times normal speed">
       </div>
       <div class="setting checkbox">
         <input type="checkbox" id="auto-speak" checked>
         <label for="auto-speak">Speak new descriptions automatically</label>
       </div>
+      <div class="setting checkbox">
+        <input type="checkbox" id="demo-mode">
+        <label for="demo-mode">Demo mode — identify against the built-in sample programs instead of real fingerprinting (works with no network connection and no API key)</label>
+      </div>
     </section>
 
     <section aria-labelledby="about-heading" class="card about">
       <h2 id="about-heading">About this prototype</h2>
-      <p>This is an early working prototype of True Access, built by Mary Robinson. Microphone capture, voice output, and the full listening flow are real. Content identification currently runs in demo mode with sample descriptions while the real identification service is being built.</p>
+      <p>This is an early working prototype of True Access, built by Mary Robinson. Microphone capture, voice output, and the full listening flow are real. Music identification is real too: the app fingerprints ten seconds of audio on your phone and matches it against the free AcoustID database (needs the free API key — steps are in FINGERPRINTING.md). TV shows and movies are not in any free database yet, so Demo mode with the sample programs stays available for testing the full flow. See ACCESSIBILITY.md in the project for the full accessibility audit and the VoiceOver test procedure.</p>
     </section>
   </main>
+
+  <!-- Sticky quick actions: thumb-friendly, always reachable, work with the screen off. -->
+  <nav class="quick-bar" aria-label="Quick actions">
+    <button id="repeat-btn" type="button" class="btn btn-secondary">Repeat last description</button>
+    <button id="stop-all-btn" type="button" class="btn btn-danger">Stop everything</button>
+  </nav>
 
   <footer class="app-footer">
     <p>True Access — true access for every blind person in the world.</p>
   </footer>
 
+  <script src="voice-trigger.js"></script>
+  <script src="descriptions.js"></script>
   <script src="app.js"></script>
   <script>
     // Register the service worker so the app can be installed (needs HTTPS or localhost).
