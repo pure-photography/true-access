@@ -1,0 +1,197 @@
+/* True Access — high-contrast, large-touch-target, screen-reader-first styles */
+
+:root {
+  --bg: #0b0b1a;
+  --card: #16162b;
+  --text: #f5f5ff;
+  --muted: #c9c9e6;
+  --accent: #7c5cff;
+  --accent-bright: #a68cff;
+  --danger: #ff6b6b;
+  --focus: #ffd166;
+  --radius: 14px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 18px;
+  line-height: 1.6;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--focus);
+  color: #000;
+  padding: 12px 18px;
+  z-index: 100;
+  border-radius: 0 0 8px 0;
+  font-weight: bold;
+}
+.skip-link:focus { left: 0; }
+
+.app-header {
+  text-align: center;
+  padding: 28px 16px 12px;
+}
+.app-header h1 {
+  margin: 0 0 8px;
+  font-size: 2.4rem;
+  letter-spacing: 0.5px;
+}
+.tagline {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+.app-main {
+  width: 100%;
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 12px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid #2b2b4d;
+  border-radius: var(--radius);
+  padding: 20px;
+}
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 1.3rem;
+}
+.card h3 {
+  margin: 0 0 8px;
+  font-size: 1.1rem;
+}
+
+.status-text {
+  font-size: 1.15rem;
+  font-weight: 600;
+  margin: 0 0 16px;
+  padding: 12px;
+  background: #0e0e20;
+  border-radius: 10px;
+  border-left: 5px solid var(--accent);
+}
+
+/* Level meter */
+.level-wrap label { display: block; margin-bottom: 6px; font-weight: 600; }
+.level-meter {
+  height: 26px;
+  background: #0e0e20;
+  border-radius: 13px;
+  overflow: hidden;
+  border: 1px solid #2b2b4d;
+}
+.level-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #4ade80, #ffd166 60%, #ff6b6b 90%);
+  transition: width 80ms linear;
+}
+.level-text { margin: 6px 0 0; color: var(--muted); font-size: 0.95rem; }
+
+/* Buttons */
+.btn {
+  font: inherit;
+  font-weight: 700;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 22px;
+  cursor: pointer;
+  min-height: 56px;
+  transition: transform 0.05s ease;
+}
+.btn:active { transform: scale(0.98); }
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled), .btn-primary:focus-visible { background: var(--accent-bright); }
+.btn-secondary {
+  background: transparent;
+  color: var(--text);
+  border: 2px solid var(--accent);
+}
+.btn-secondary:hover:not(:disabled), .btn-secondary:focus-visible { background: #221d45; }
+.btn-big { font-size: 1.25rem; padding: 18px 28px; min-height: 68px; }
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+.button-row .btn { flex: 1 1 200px; }
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+/* Mic picker */
+.mic-select label, .setting label { display: block; margin-bottom: 6px; font-weight: 600; }
+select, input[type="range"] {
+  font: inherit;
+  width: 100%;
+  padding: 12px;
+  border-radius: 10px;
+  border: 2px solid #2b2b4d;
+  background: #0e0e20;
+  color: var(--text);
+  min-height: 52px;
+}
+.mic-select .btn { margin-top: 10px; }
+.hint { color: var(--muted); font-size: 0.95rem; margin: 12px 0 0; }
+
+.setting { margin-bottom: 16px; }
+.setting:last-child { margin-bottom: 0; }
+.checkbox { display: flex; align-items: center; gap: 12px; }
+.checkbox input { width: 28px; height: 28px; accent-color: var(--accent); }
+.checkbox label { margin: 0; font-weight: 600; }
+#rate-value { font-weight: 700; }
+
+/* Result */
+.identified { font-size: 1.05rem; }
+.description-box {
+  background: #0e0e20;
+  border-radius: 10px;
+  padding: 14px;
+  margin: 12px 0;
+}
+#description-text { margin: 0; font-size: 1.1rem; }
+#description-text:focus { outline: 3px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+
+.about p { color: var(--muted); margin: 0; }
+
+.app-footer {
+  text-align: center;
+  padding: 18px 12px 28px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn { transition: none; }
+  .level-fill { transition: none; }
+}
