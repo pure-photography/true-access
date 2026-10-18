@@ -1,5 +1,5 @@
 /* True Access service worker — offline app shell for installability. */
-const CACHE_NAME = 'true-access-v3';
+const CACHE_NAME = 'true-access-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   './voice-trigger.js',
   './descriptions.js',
   './official-ad-db.json',
+  './meta-integration.json',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',

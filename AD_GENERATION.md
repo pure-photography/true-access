@@ -4,6 +4,12 @@ How the app turns an identified title into a spoken audio description.
 Built October 2026. Lives in `descriptions.js` (+ `official-ad-db.json`),
 wired into `app.js` → `describeWhatsPlaying()`.
 
+**No-credits rule (Mary's standing rule):** nothing with credits — no
+credit-based services, no pay-as-you-go, no "free tier with credits."
+The default chain below is keyless and credit-free (Pollinations, LLM7).
+Gemini is optional-only (quota-based free tier, no credits) and the app
+never requires it.
+
 ## The two-stage flow
 
 ```

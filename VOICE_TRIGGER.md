@@ -1,8 +1,10 @@
 # True Access — Hands-Free Voice Trigger
 
-*Worker 3 of 5 (Voice Trigger). Implemented 2026-10-18.*
+*Worker 3 of 5 (Voice Trigger). Implemented 2026-10-18. Extended 2026-10-18 with Siri Shortcut path.*
 
-Say **"describe this"** any time while listening is active, and True Access runs the same describe flow as the "Describe what's playing" button — no tapping needed. Everything is announced to the screen reader: *"Voice trigger listening"*, *"Voice trigger heard you — describing now"*, *"Voice trigger off."*
+Say **"describe this"** (or **"audio describe"**) any time while listening is active, and True Access runs the same describe flow as the "Describe what's playing" button — no tapping needed. Everything is announced to the screen reader: *"Voice trigger listening"*, *"Voice trigger heard you — describing now"*, *"Voice trigger off."*
+
+**Don't even want to open the app?** Set up **"Hey Siri, describe this"** with the free iPhone Shortcuts app — it opens True Access straight into the describe flow. Steps in `SHORTCUTS.md` (about 3 minutes, no tapping needed after setup; Back Tap supported too).
 
 ---
 

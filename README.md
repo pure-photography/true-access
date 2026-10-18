@@ -5,12 +5,14 @@ Real-time audio description that works on whatever you're watching — TV, phone
 ## What's real vs. demo in this prototype
 
 **Real (works today):**
-- Microphone capture via `getUserMedia` — including Bluetooth headset mics (e.g. Ray-Ban Meta glasses paired to the phone)
+- Microphone capture via `getUserMedia` — including Bluetooth headset mics (e.g. Ray-Ban Meta glasses paired to the phone), with free on-device noise suppression + echo cancellation
 - Microphone picker (choose the glasses' mic specifically)
 - Live microphone level meter (with a text alternative for screen readers)
-- Text-to-speech via the Web Speech API (voice selection, speech speed, auto-speak toggle)
+- Text-to-speech via the Web Speech API (voice selection, speech speed, auto-speak toggle) — your voice, speed, and detail choices are remembered on your phone
 - The full flow: idle → listening → identifying → describing
-- Hands-free voice trigger: say **"describe this"** to describe without tapping (Porcupine on-device wake word when set up, browser speech recognition as the fallback, hold-to-talk button). Full details in `VOICE_TRIGGER.md`.
+- Hands-free voice trigger: say **"describe this"** or **"audio describe"** to describe without tapping (Porcupine on-device wake word when set up, browser speech recognition as the fallback, hold-to-talk button). Full details in `VOICE_TRIGGER.md`.
+- **Siri Shortcut trigger:** say "Hey Siri, describe this" — a free iPhone Shortcut opens `?action=describe&autostart=1` straight into the describe flow (see `SHORTCUTS.md`; Back Tap supported too)
+- **External trigger surface for Meta:** URL actions (`?action=describe|repeat|start|stop`), custom protocol (`web+trueaccess://describe`), and a `postMessage` control API for embedding in another app's webview — see `META_INTEGRATION.md` + `meta-integration.json`
 
 **Demo (simulated for now):**
 - Content identification. A real Shazam-style audio-fingerprint backend needs a paid service. `identifyContent()` in `app.js` waits ~3 seconds and returns one of 3 built-in sample programs. The function is clearly marked with a TODO showing exactly how to plug in a real API later — downstream code already expects the right shape, so only that one function needs to change.
@@ -38,9 +40,22 @@ Real-time audio description that works on whatever you're watching — TV, phone
 ## Files
 - `index.html` — accessible UI (skip link, ARIA live status, labeled controls, keyboard navigable)
 - `styles.css` — high-contrast theme, large touch targets, visible focus, reduced-motion support
-- `app.js` — mic capture, level meter, demo identification, TTS
+- `app.js` — mic capture, level meter, demo identification, TTS, URL actions + postMessage bridge, settings persistence
 - `descriptions.js` — real AI description pipeline: official-AD-track lookup → free-LLM generation (see `AD_GENERATION.md`)
 - `official-ad-db.json` — curated seed database of titles with official AD tracks
 - `AD_GENERATION.md` — how the description pipeline works, service choices, setup
-- `manifest.json` / `sw.js` — PWA installability + offline shell
+- `VOICE_TRIGGER.md` — hands-free trigger: engines, setup, the "Hey Meta" conflict, test checklist
+- `SHORTCUTS.md` — "Hey Siri, describe this": free iPhone Shortcut + Back Tap setup
+- `META_INTEGRATION.md` — the Meta pitch: live integration points + the six asks
+- `meta-integration.json` — machine-readable version of the Meta pitch
+- `manifest.json` / `sw.js` — PWA installability + offline shell (+ `web+trueaccess://` protocol handler)
 - `icons/` — app icons (192px, 512px)
+
+## No-credits rule
+
+Mary's standing rule: **nothing with credits.** No credit-based services, no pay-as-you-go, no "free tier with credits." Every third-party service in True Access is free with no credit system and no expiring trial:
+- AcoustID — free forever, no card, no credits (music identification)
+- Porcupine wake word — free tier, no card, no credits (user-count limited; the Meta integration removes this ceiling)
+- Pollinations / LLM7 — keyless, no accounts, no credits (AI descriptions)
+- Web Speech API — built into the browser (speech output)
+- iOS Shortcuts / Siri / Back Tap — built into the iPhone (hands-free triggering)

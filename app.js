@@ -233,9 +233,18 @@ async function startListening() {
     showConsent();
     return;
   }
-  const constraints = { audio: true };
+  /* Free on-device audio cleanup (built into the browser — no service, no
+   * credits): noise suppression + echo cancellation make both the level
+   * meter and fingerprinting more reliable, especially with TV audio. */
+  const constraints = {
+    audio: {
+      noiseSuppression: true,
+      echoCancellation: true,
+      autoGainControl: true
+    }
+  };
   if (micPicker.value) {
-    constraints.audio = { deviceId: { exact: micPicker.value } };
+    constraints.audio.deviceId = { exact: micPicker.value };
   }
   try {
     setStatus('Requesting microphone access…');
@@ -253,6 +262,14 @@ async function startListening() {
     moveFocus(stopBtn); // focus moves BEFORE startBtn is disabled: focus is never lost
     startBtn.disabled = true;
     setStatus('Listening. Play something nearby, then tap "Describe what\u2019s playing".');
+    /* An external trigger (Siri Shortcut, deep link, connected app) asked
+     * for a describe as soon as listening was up — run it now. */
+    if (pendingActionAfterListen === 'describe') {
+      pendingActionAfterListen = null;
+      describeWhatsPlaying();
+    } else {
+      pendingActionAfterListen = null;
+    }
   } catch (err) {
     const name = err && err.name;
     if (name === 'NotAllowedError' || name === 'SecurityError') {
@@ -562,7 +579,7 @@ function loadVoices() {
     return;
   }
   const voices = getVoices();
-  const previous = voicePicker.value;
+  const previous = voicePicker.value || recallSetting('taVoice') || '';
   voicePicker.innerHTML = '<option value="">System default voice</option>';
   voices.forEach(v => {
     const opt = document.createElement('option');
@@ -570,7 +587,9 @@ function loadVoices() {
     opt.textContent = v.name + ' (' + v.lang + ')';
     voicePicker.appendChild(opt);
   });
-  if (previous) voicePicker.value = previous;
+  if (previous && voicePicker.querySelector('option[value="' + CSS.escape(previous) + '"]')) {
+    voicePicker.value = previous;
+  }
 }
 
 /* iOS Safari only allows speechSynthesis.speak() inside (or very near) a
@@ -650,7 +669,16 @@ function repeatLastDescription() {
   speakText(lastDescription.text);
 }
 
-/* ---------- Settings announcements ---------- */
+/* ---------- Settings announcements + persistence ----------
+ * Mary's voice, speed, and detail choices are remembered on her phone
+ * (localStorage) so she never has to set them up twice. */
+function rememberSetting(key, value) {
+  try { window.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+}
+function recallSetting(key) {
+  try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
+
 function rateSpeechText(value) {
   return value.toFixed(1) + ' times normal speed';
 }
@@ -663,13 +691,36 @@ rateInput.addEventListener('input', () => {
 
 rateInput.addEventListener('change', () => {
   const v = parseFloat(rateInput.value) || 1;
-  setStatus('Speech speed set to ' + rateSpeechText(v) + '.');
+  rememberSetting('taRate', String(v));
+  setStatus('Speech speed set to ' + rateSpeechText(v) + '. Saved.');
 });
 
 verbositySelect.addEventListener('change', () => {
   const label = verbositySelect.options[verbositySelect.selectedIndex].textContent;
-  setStatus('Description detail set to: ' + label + '.');
+  rememberSetting('taVerbosity', verbositySelect.value);
+  setStatus('Description detail set to: ' + label + '. Saved.');
 });
+
+voicePicker.addEventListener('change', () => {
+  rememberSetting('taVoice', voicePicker.value);
+  const label = voicePicker.options[voicePicker.selectedIndex].textContent;
+  setStatus('Description voice set to: ' + label + '. Saved.');
+});
+
+/* Restore remembered settings on load (before voices arrive; loadVoices
+ * re-applies the voice choice once the list populates). */
+(function restoreSettings() {
+  const rate = parseFloat(recallSetting('taRate'));
+  if (rate >= 0.5 && rate <= 2) {
+    rateInput.value = String(rate);
+    rateValue.textContent = rate.toFixed(1);
+    rateInput.setAttribute('aria-valuetext', rateSpeechText(rate));
+  }
+  const verbosity = recallSetting('taVerbosity');
+  if (verbosity && verbositySelect.querySelector('option[value="' + verbosity + '"]')) {
+    verbositySelect.value = verbosity;
+  }
+})();
 
 micPicker.addEventListener('change', () => {
   const label = micPicker.options[micPicker.selectedIndex].textContent;
@@ -720,6 +771,129 @@ if (navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
 }
 loadMicrophones(false);
 
+/* ============================================================================
+ * EXTERNAL TRIGGER SURFACE — deep links, Siri Shortcuts, Meta integration
+ * ----------------------------------------------------------------------------
+ * True Access can be driven from outside the page, with no tapping inside
+ * the app:
+ *
+ *   URL actions (works from Siri Shortcuts, home-screen shortcuts, links):
+ *     ?action=describe   start listening (if needed) and describe what's playing
+ *     ?action=repeat     speak the last description again (no mic needed)
+ *     ?action=start      just start listening
+ *     ?action=stop       stop everything
+ *   Combine with &autostart=1 to begin immediately on page load.
+ *   Example: https://pure-photography.github.io/true-access/?action=describe&autostart=1
+ *
+ *   Custom protocol (installed PWA, Chrome/Edge):
+ *     web+trueaccess://describe   (registered in manifest.json)
+ *
+ *   postMessage API (for embedding in another app — e.g. Meta's app — as a
+ *   webview or iframe). Send { type:'true-access/<action>', id } and get
+ *   back { type:'true-access/response', id, ok, ... }:
+ *     true-access/ping     -> { ok:true, app:'true-access', version }
+ *     true-access/status   -> { ok:true, listening, speaking, hasResult }
+ *     true-access/describe -> { ok:true } | { ok:false, error:'not-listening' }
+ *     true-access/repeat   -> { ok:true }
+ *     true-access/stop     -> { ok:true }
+ *   Honest limits: browsers only grant the microphone after a user gesture,
+ *   so describe/repeat-via-message work once listening is already on. If
+ *   not, the response says so instead of failing silently.
+ * ========================================================================== */
+const TRUE_ACCESS_VERSION = '0.4.0';
+
+function handleExternalAction(action) {
+  const a = (action || '').toLowerCase().trim();
+  if (!a) return false;
+  if (a === 'describe') {
+    // If the mic is already on, describe right away. Otherwise start
+    // listening first — the describe follows automatically once audio is up.
+    if (mediaStream) {
+      describeWhatsPlaying();
+    } else {
+      pendingActionAfterListen = 'describe';
+      startListening();
+    }
+    return true;
+  }
+  if (a === 'repeat') {
+    repeatLastDescription();
+    return true;
+  }
+  if (a === 'start') {
+    startListening();
+    return true;
+  }
+  if (a === 'stop') {
+    stopEverything();
+    return true;
+  }
+  return false;
+}
+
+/* When listening starts via an external action, run the queued action. */
+let pendingActionAfterListen = null;
+
+/* Parse ?action= from the URL. Also unwraps web+trueaccess://<action>
+ * links (manifest protocol_handlers deliver the full URL as ?action=). */
+function readUrlAction() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    let action = params.get('action') || '';
+    const protoPrefix = 'web+trueaccess://';
+    if (action.toLowerCase().indexOf(protoPrefix) === 0) {
+      action = action.slice(protoPrefix.length).split(/[?#]/)[0];
+    }
+    return {
+      action: action,
+      autostart: params.get('autostart') === '1' || params.get('action') !== null
+    };
+  } catch (e) {
+    return { action: '', autostart: false };
+  }
+}
+
+window.addEventListener('message', (event) => {
+  const msg = event.data;
+  if (!msg || typeof msg !== 'object' || typeof msg.type !== 'string') return;
+  if (msg.type.indexOf('true-access/') !== 0) return;
+  const action = msg.type.slice('true-access/'.length);
+  const reply = (payload) => {
+    try {
+      const response = Object.assign({ type: 'true-access/response', id: msg.id || null }, payload);
+      if (event.source && event.source.postMessage) {
+        event.source.postMessage(response, event.origin || '*');
+      }
+    } catch (e) { /* the sender went away — nothing to do */ }
+  };
+  const speaking = ('speechSynthesis' in window) && speechSynthesis.speaking;
+  if (action === 'ping') {
+    reply({ ok: true, app: 'true-access', version: TRUE_ACCESS_VERSION });
+  } else if (action === 'status') {
+    reply({ ok: true, listening: !!mediaStream, speaking: speaking, hasResult: !!lastDescription });
+  } else if (action === 'describe') {
+    if (!mediaStream) {
+      setStatus('A connected app asked for a description, but listening is off. Starting the microphone — tap "Yes, allow the microphone" to continue.');
+      pendingActionAfterListen = 'describe';
+      startListening();
+      reply({ ok: false, error: 'not-listening', note: 'mic consent needed; describe will run once listening starts' });
+    } else {
+      describeWhatsPlaying().then(
+        () => reply({ ok: true }),
+        (err) => reply({ ok: false, error: (err && err.message) || 'describe-failed' })
+      );
+    }
+  } else if (action === 'repeat') {
+    repeatLastDescription();
+    reply({ ok: true });
+  } else if (action === 'stop') {
+    stopEverything();
+    reply({ ok: true });
+  } else {
+    reply({ ok: false, error: 'unknown-action' });
+  }
+});
+
 /* ---------- Hands-free voice trigger integration ----------
  * voice-trigger.js loads after this file, so wire it up once the page
  * (and all scripts) are ready. The trigger reuses describeWhatsPlaying()
@@ -736,5 +910,22 @@ window.addEventListener('load', () => {
       },
       isListening: () => !!mediaStream
     });
+  }
+  /* External trigger: ?action=describe&autostart=1 (Siri Shortcut,
+   * home-screen shortcut, Meta deep link). Runs after everything is wired.
+   * Note: browsers may still need one tap for the microphone — an Apple/
+   * browser rule, not ours. If so, the consent card is shown and focused
+   * so the single tap is all it takes. */
+  const urlAction = readUrlAction();
+  if (urlAction.action) {
+    if (urlAction.autostart) {
+      setStatus('Opening True Access from a shortcut…');
+    }
+    // Small delay lets the voice list and mic list settle first.
+    window.setTimeout(() => {
+      if (!handleExternalAction(urlAction.action)) {
+        setAlert('Unknown shortcut action: "' + urlAction.action + '". Try "describe", "repeat", "start", or "stop".');
+      }
+    }, 600);
   }
 });
